@@ -1,0 +1,26 @@
+# gavi_burger, made with the linuxlive.com wizard on 2026-11-04.
+# Build it in your own GitHub from https://github.com/Eric-Ness/linuxlive-distro (see README.md)
+schema_version: 1
+name: "gavi_burger"
+version: "0.1"
+base: ubuntu
+desktop: gnome
+apps:
+  - firefox
+branding:
+  wallpaper: assets/wallpaper.png
+  logo: assets/logo.png
+  accent_color: "#e0661f"
+settings:
+  autologin: true
+firefox:
+  homepage: "https://gaviburger.com/index.php?screen=pantalla%201"
+kiosk:
+  app: firefox
+persistence: true
+# Your own additions. Scripts and repos run as root; read them before you share the distro.
+packages:
+  - xdotool
+scripts:
+  first-boot:
+    - scripts/first-boot.sh
