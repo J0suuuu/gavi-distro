@@ -1,0 +1,23 @@
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: [README.md]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: Eric-Ness/linuxlive/.github/workflows/build.yml@v0.9.1
+    with:
+      spec: linuxlive.yaml
+      publish-image: true
