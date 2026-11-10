@@ -30,8 +30,8 @@ import urllib.request
 import urllib.parse
 import os
 
-API = "https://gaviburger.com/api.php"
-SCREEN = "pantalla 1"
+API = "https://supermercadosalacasa.es/api.php"
+SCREEN = "Poligono entrada"
 STATE_FILE = "/var/lib/reboot-agent-state"
 
 def api_request(action):
