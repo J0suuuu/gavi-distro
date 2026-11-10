@@ -14,7 +14,7 @@ branding:
 settings:
   autologin: true
 firefox:
-  homepage: "https://gaviburger.com/index.php?screen=pantalla%201"
+  homepage: "https://supermercadosalacasa.es/index.php?screen=Poligono%20entrada"
 kiosk:
   app: firefox
 persistence: true
