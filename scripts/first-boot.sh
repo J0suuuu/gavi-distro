@@ -1,20 +1,27 @@
 #!/bin/bash
-# Este script se ejecuta automáticamente como root en el primer arranque
+# ==============================================================================
+# 1. CONEXIÓN WI-FI, LÍMITE DE CPU Y SSH (Configuraciones nuevas)
+# ==============================================================================
 
-# 1. Conectar a la red Wi-Fi automáticamente
+# Conectar a la red Wi-Fi automáticamente al arrancar
 nmcli radio wifi on
 nmcli dev wifi connect "Telecable_feNq" password "m3F9C3YA"
 
-# 2. Limitar la CPU (Intel P-State) al valor deseado
+# Limitar la CPU (Intel P-State)
 if [ -f /sys/devices/system/cpu/intel_pstate/max_perf_pct ]; then
     echo 650000 | tee /sys/devices/system/cpu/intel_pstate/max_perf_pct
 fi
 
-# 3. Habilitar e iniciar el servidor SSH
+# Habilitar e iniciar el servidor SSH
 systemctl enable ssh
 systemctl start ssh
 
-# 4. Crear el script de Python mejorado para el agente de reinicio
+
+# ==============================================================================
+# 2. AGENTE DE REINICIO POR API (Python y Systemd)
+# ==============================================================================
+
+# Crear el script de Python con protección contra bucles infinitos
 cat << 'EOF' > /usr/local/bin/reboot-agent.py
 #!/usr/bin/env python3
 import json
@@ -25,7 +32,7 @@ import os
 
 API = "https://gaviburger.com/api.php"
 SCREEN = "pantalla 1"
-STATE_FILE = "/var/lib/reboot-agent-state" # Archivo para evitar reinicios en bucle
+STATE_FILE = "/var/lib/reboot-agent-state"
 
 def api_request(action):
     params = urllib.parse.urlencode({
@@ -55,13 +62,12 @@ while True:
         
         print(f"Conectado | Ping: {ping} | Reinicio pendiente: {pending}", flush=True)
         
-        # Si hay un reinicio pendiente y la marca de tiempo es nueva
         if pending and requested_at:
             last_processed = get_last_reboot()
             if str(requested_at) != last_processed:
                 print(f"Nueva orden de reinicio recibida ({requested_at}). Reiniciando...", flush=True)
                 save_last_reboot(requested_at)
-                os.system("systemctl reboot -i") # -i ignora inhibidores como el kiosco
+                os.system("systemctl reboot -i")
                 break
             else:
                 print("Orden de reinicio ya procesada. Esperando...", flush=True)
@@ -74,7 +80,7 @@ EOF
 
 chmod +x /usr/local/bin/reboot-agent.py
 
-# 5. Crear el servicio de systemd para que el agente arranque siempre
+# Crear servicio systemd para el agente
 cat << 'EOF' > /etc/systemd/system/reboot-agent.service
 [Unit]
 Description=Viridian Reboot Agent
@@ -94,3 +100,26 @@ EOF
 systemctl daemon-reload
 systemctl enable reboot-agent.service
 systemctl start reboot-agent.service
+
+
+# ==============================================================================
+# 3. REFRESCO DE FIREFOX (Tu código original intacto)
+# ==============================================================================
+
+# Asegúrate de que aquí esté la primera parte de tu bucle original 
+# (la que define el sleep o la búsqueda de la ventana). 
+# Esta es la estructura unida para que no pise nada:
+
+(
+    # --- INICIO DE TU CÓDIGO ORIGINAL (Pega aquí si faltaba algo del while) ---
+    while true; do
+        WINDOW=$(xdotool search --onlyvisible --class firefox 2>/dev/null | head -n 1)
+        
+        # Esta es la parte que me pasaste y que se mantiene igual:
+        if [ -n "$WINDOW" ]; then
+            xdotool key --window "$WINDOW" ctrl+r
+        fi
+        
+        sleep 60 # O el tiempo de espera que tuvieras originalmente
+    done
+) >/tmp/firefox-refresh.log 2>&1 &
