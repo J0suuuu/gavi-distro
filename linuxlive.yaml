@@ -21,6 +21,7 @@ persistence: true
 # Your own additions. Scripts and repos run as root; read them before you share the distro.
 packages:
   - xdotool
+  - openssh-server
 scripts:
   first-boot:
     - scripts/first-boot.sh
