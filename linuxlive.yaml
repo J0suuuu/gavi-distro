@@ -22,6 +22,8 @@ persistence: true
 packages:
   - xdotool
   - openssh-server
+  - network-manager
+
 scripts:
-  first-boot:
-    - scripts/first-boot.sh
+  build:
+    - scripts/build.sh
