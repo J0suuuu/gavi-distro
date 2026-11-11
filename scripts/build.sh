@@ -117,6 +117,7 @@ enable_svc gavi-set-password.service
 
 # ===========================================================================
 # 5. AGENTE DE REINICIO — script Python + servicio
+#    Incluye force_reboot() para saltar el prompt de casper
 # ===========================================================================
 cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 #!/usr/bin/env python3
@@ -147,6 +148,29 @@ def save(v):
     except Exception as e:
         log(f"error guardando estado: {e}")
 
+def force_reboot():
+    """Reboot forzado que salta el prompt de casper"""
+    log("Sincronizando disco...")
+    os.system("sync")
+    os.system("sync")
+    
+    # Habilitar sysrq si no lo está
+    os.system("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null")
+    
+    # Reboot inmediato a nivel de kernel (salta todo el shutdown de casper)
+    log("Reboot via sysrq...")
+    try:
+        with open("/proc/sysrq-trigger", "w") as f:
+            f.write("b")
+    except Exception as e:
+        log(f"sysrq fallo: {e}")
+    
+    # Si sysrq no funcionó, intentar métodos alternativos
+    time.sleep(3)
+    os.system("reboot -f")
+    time.sleep(3)
+    os.system("systemctl reboot -ff")
+
 log(f"Arrancando agente para pantalla: {SCREEN}")
 while True:
     try:
@@ -158,7 +182,7 @@ while True:
         if pend and rat and str(rat) != str(last()):
             log(f"Nueva orden de reinicio ({rat}). Reiniciando...")
             save(rat)
-            os.system("systemctl reboot -i")
+            force_reboot()
             sys.exit(0)
     except Exception as e:
         log(f"error de conexion: {e}")
@@ -259,5 +283,39 @@ RestartSec=10
 WantedBy=graphical.target
 EOF
 enable_svc firefox-refresh.service graphical.target
+
+# ===========================================================================
+# 7. ELIMINAR PROMPT "REMOVE INSTALLATION MEDIUM" DE CASPER
+#    Crítico para kioscos desatendidos: sin esto el reboot se queda colgado
+# ===========================================================================
+
+# Habilitar sysrq permanentemente (para el reboot forzado del agente)
+mkdir -p /etc/sysctl.d
+echo "kernel.sysrq=1" > /etc/sysctl.d/99-gavi-sysrq.conf
+
+# Modificar /etc/init.d/casper si existe (eliminar el prompt y el read)
+if [ -f /etc/init.d/casper ]; then
+    sed -i 's/.*[Pp]lease remove the installation medium.*/    true  # kiosk: prompt removed/' /etc/init.d/casper
+    sed -i '/kiosk: prompt removed/{n;s/^\s*read.*/    true  # kiosk: read removed/}' /etc/init.d/casper
+fi
+
+# Buscar el prompt en scripts de shutdown de systemd
+for dir in /lib/systemd/system-shutdown /usr/lib/systemd/system-shutdown /etc/systemd/system-shutdown; do
+    if [ -d "$dir" ]; then
+        for f in "$dir"/*; do
+            [ -f "$f" ] && sed -i 's/.*[Pp]lease remove the installation medium.*/true/' "$f" 2>/dev/null
+        done
+    fi
+done
+
+# Buscar en cualquier script de casper
+find /usr/share /etc /lib -name "*casper*" -type f 2>/dev/null | while read f; do
+    sed -i 's/.*[Pp]lease remove the installation medium.*/true/' "$f" 2>/dev/null || true
+done
+
+# Reconstruir initramfs para aplicar cambios de casper
+if command -v update-initramfs >/dev/null 2>&1; then
+    update-initramfs -u 2>/dev/null || true
+fi
 
 echo "build.sh completado correctamente"
