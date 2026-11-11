@@ -184,28 +184,69 @@ EOF
 enable_svc reboot-agent.service
 
 # ===========================================================================
-# 6. REFRESCO DE FIREFOX — servicio (antes estaba en first-boot y no corria)
+# 6. REFRESCO DE FIREFOX — dos fases según uptime
+#    Fase 1: primeros 4 min (240s) → refresh cada 30s
+#    Fase 2: después → refresh cada 2h (7200s)
 # ===========================================================================
 cat > /usr/local/bin/firefox-refresh.sh << 'EOF'
 #!/bin/bash
+
+# --- Espera inicial para que Firefox arranque ---
 sleep 20
-while true; do
+
+# Variables de entorno del kiosco (para que xdotool pueda encontrar Firefox)
+setup_env() {
     KUID=$(id -u linuxlive-kiosk 2>/dev/null || echo 1000)
     export XDG_RUNTIME_DIR="/run/user/$KUID"
     export DISPLAY="${DISPLAY:-:0}"
     export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+    if [ -d "$XDG_RUNTIME_DIR" ]; then
+        export XAUTHORITY="$XDG_RUNTIME_DIR/Xauthority"
+    fi
+}
+
+# --- Función que hace un refresh de Firefox ---
+do_refresh() {
+    setup_env
     WINDOW=$(xdotool search --onlyvisible --class firefox 2>/dev/null | head -n 1)
     if [ -n "$WINDOW" ]; then
         xdotool key --window "$WINDOW" ctrl+r 2>/dev/null
+        echo "[firefox-refresh] $(date '+%H:%M:%S') -> refrescado (uptime $(awk '{print int($1)}' /proc/uptime)s)"
     fi
-    sleep 60
+}
+
+# --- Umbrales ---
+FASE1_DURATION=240   # 4 minutos
+FASE1_INTERVAL=30    # 30 segundos
+FASE2_INTERVAL=7200  # 2 horas
+
+# --- Refrescar nada más empezar ---
+do_refresh
+
+# --- Bucle principal con dos fases ---
+while true; do
+    UPTIME=$(awk '{print int($1)}' /proc/uptime)
+
+    if [ "$UPTIME" -lt "$FASE1_DURATION" ]; then
+        # FASE 1: arranque → 4 minutos (cada 30s)
+        SLEEP_FOR="$FASE1_INTERVAL"
+        # No sobrepasar el límite de la fase 1
+        REMAINING=$(( FASE1_DURATION - UPTIME ))
+        [ "$REMAINING" -lt "$SLEEP_FOR" ] && SLEEP_FOR="$REMAINING"
+    else
+        # FASE 2: después de 4 minutos (cada 2h)
+        SLEEP_FOR="$FASE2_INTERVAL"
+    fi
+
+    sleep "$SLEEP_FOR"
+    do_refresh
 done
 EOF
 chmod +x /usr/local/bin/firefox-refresh.sh
 
 cat > /etc/systemd/system/firefox-refresh.service << 'EOF'
 [Unit]
-Description=Gavi Burger - refresco de Firefox
+Description=Gavi Burger - refresco de Firefox (30s primeros 4min, luego 2h)
 After=graphical.target
 
 [Service]
