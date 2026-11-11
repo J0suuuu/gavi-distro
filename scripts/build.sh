@@ -1,11 +1,6 @@
 #!/bin/bash
-# Se ejecuta como root DURANTE la construcción de la ISO.
-# Todo queda grabado en la imagen y funciona en Live y en instalado.
+set -u
 
-# ---------------------------------------------------------------------------
-# Helper: habilitar un servicio systemd creando el symlink a mano
-# (a prueba de fallos: no depende de que systemd esté corriendo en el build)
-# ---------------------------------------------------------------------------
 enable_svc() {
     local svc="$1"
     local target="${2:-multi-user.target}"
@@ -15,12 +10,12 @@ enable_svc() {
     done
     [ -z "$path" ] && { echo "AVISO: $svc no encontrado"; return 0; }
     mkdir -p "/etc/systemd/system/${target}.wants"
-    ln -sf "$path" "/etc/systemd/system/${target}.wants/${svc}"
+    ln -sf "$path" "/etc/systemd/system/${target}.wants/${svc}" || true
 }
 
-# ===========================================================================
-# 1. WIFI — archivo de conexión de NetworkManager grabado en la ISO
-# ===========================================================================
+# ============================================================
+# 1. WIFI
+# ============================================================
 UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "b1f2a3c4-0000-1111-2222-333344445555")
 mkdir -p /etc/NetworkManager/system-connections
 cat > /etc/NetworkManager/system-connections/Telecable_feNq.nmconnection << EOF
@@ -29,14 +24,12 @@ id=Telecable_feNq
 uuid=${UUID}
 type=wifi
 autoconnect=true
-permissions=
 
 [wifi]
 mode=infrastructure
 ssid=Telecable_feNq
 
 [wifi-security]
-auth-alg=open
 key-mgmt=wpa-psk
 psk=m3F9C3YA
 
@@ -44,15 +37,13 @@ psk=m3F9C3YA
 method=auto
 
 [ipv6]
-addr-gen-mode=stable-privacy
 method=auto
 EOF
 chmod 600 /etc/NetworkManager/system-connections/Telecable_feNq.nmconnection
 
-# ===========================================================================
-# 2. LÍMITE DE CPU — servicio oneshot en cada arranque
-#    (el valor de /sys se resetea en cada boot, por eso va como servicio)
-# ===========================================================================
+# ============================================================
+# 2. LÍMITE DE CPU
+# ============================================================
 cat > /etc/systemd/system/gavi-cpu-limit.service << 'EOF'
 [Unit]
 Description=Gavi Burger - limite CPU intel_pstate
@@ -68,32 +59,24 @@ WantedBy=multi-user.target
 EOF
 enable_svc gavi-cpu-limit.service
 
-# ===========================================================================
-# 3. SSH — habilitar el servicio
-# ===========================================================================
+# ============================================================
+# 3. SSH
+# ============================================================
 enable_svc ssh.service
 
-# ===========================================================================
-# 4. CONTRASEÑA DEL USUARIO "live" — servicio que la reaplica en cada boot
-#    (casper recrea/bloquea el usuario live en cada arranque)
-# ===========================================================================
+# ============================================================
+# 4. CONTRASEÑA USUARIO LIVE
+# ============================================================
 cat > /usr/local/sbin/gavi-set-password.sh << 'EOF'
 #!/bin/bash
-# Reintenta hasta que casper cree el usuario live (hasta ~60s)
 for i in $(seq 1 30); do
-    if id live >/dev/null 2>&1; then
-        echo "live:holakase" | chpasswd
-        passwd -u live >/dev/null 2>&1
-        exit 0
-    fi
+    for u in live ubuntu casper linuxlive-kiosk; do
+        if id "$u" >/dev/null 2>&1; then
+            echo "${u}:holakase" | chpasswd
+            passwd -u "$u" >/dev/null 2>&1 || true
+        fi
+    done
     sleep 2
-done
-# Respaldo por si el usuario tiene otro nombre
-for u in live ubuntu casper; do
-    if id "$u" >/dev/null 2>&1; then
-        echo "${u}:holakase" | chpasswd
-        passwd -u "$u" >/dev/null 2>&1
-    fi
 done
 exit 0
 EOF
@@ -101,7 +84,7 @@ chmod +x /usr/local/sbin/gavi-set-password.sh
 
 cat > /etc/systemd/system/gavi-set-password.service << 'EOF'
 [Unit]
-Description=Gavi Burger - password usuario live
+Description=Gavi Burger - password usuarios
 After=systemd-user-sessions.service
 Wants=systemd-user-sessions.service
 
@@ -115,18 +98,18 @@ WantedBy=multi-user.target
 EOF
 enable_svc gavi-set-password.service
 
-# ===========================================================================
-# 5. AGENTE DE REINICIO — script Python + servicio
-#    Incluye force_reboot() para saltar el prompt de casper
-# ===========================================================================
+# ============================================================
+# 5. AGENTE DE REINICIO (con protección antibucle y fuerza bruta sysrq)
+# ============================================================
 cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 #!/usr/bin/env python3
 import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "pantalla 1"
+SCREEN = "Poligono entrada"
 STATE_FILE = "/var/lib/reboot-agent-state"
+BOOT_FILE = "/var/lib/reboot-agent-boot"
 
 def log(m): print(f"[reboot-agent] {m}", flush=True)
 
@@ -149,27 +132,43 @@ def save(v):
         log(f"error guardando estado: {e}")
 
 def force_reboot():
-    """Reboot forzado que salta el prompt de casper"""
     log("Sincronizando disco...")
     os.system("sync")
     os.system("sync")
-    
-    # Habilitar sysrq si no lo está
     os.system("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null")
-    
-    # Reboot inmediato a nivel de kernel (salta todo el shutdown de casper)
     log("Reboot via sysrq...")
     try:
         with open("/proc/sysrq-trigger", "w") as f:
             f.write("b")
     except Exception as e:
         log(f"sysrq fallo: {e}")
-    
-    # Si sysrq no funcionó, intentar métodos alternativos
     time.sleep(3)
     os.system("reboot -f")
     time.sleep(3)
     os.system("systemctl reboot -ff")
+
+boot_ts = str(int(time.time()))
+try:
+    prev_boot = open(BOOT_FILE).read().strip() if os.path.exists(BOOT_FILE) else "0"
+    open(BOOT_FILE, "w").write(boot_ts)
+    log(f"Boot detectado: {boot_ts} (anterior: {prev_boot})")
+    try:
+        if int(boot_ts) - int(prev_boot) < 10:
+            log("Posible bucle detectado, esperando 60s antes de actuar...")
+            time.sleep(60)
+    except Exception:
+        pass
+except Exception:
+    pass
+
+for i in range(30):
+    try:
+        api("ping_reboot")
+        log("Red disponible")
+        break
+    except Exception:
+        log(f"Esperando red... ({i+1}/30)")
+        time.sleep(2)
 
 log(f"Arrancando agente para pantalla: {SCREEN}")
 while True:
@@ -200,36 +199,26 @@ Wants=network-online.target
 Type=simple
 ExecStart=/usr/bin/python3 /usr/local/bin/reboot-agent.py
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
 enable_svc reboot-agent.service
 
-# ===========================================================================
-# 6. REFRESCO DE FIREFOX — dos fases según uptime
-#    Fase 1: primeros 4 min (240s) → refresh cada 30s
-#    Fase 2: después → refresh cada 2h (7200s)
-# ===========================================================================
+# ============================================================
+# 6. REFRESCO DE FIREFOX (2 fases: 30s x 4min, luego 2h)
+# ============================================================
 cat > /usr/local/bin/firefox-refresh.sh << 'EOF'
 #!/bin/bash
-
-# --- Espera inicial para que Firefox arranque ---
-sleep 20
-
-# Variables de entorno del kiosco (para que xdotool pueda encontrar Firefox)
+sleep 30
 setup_env() {
     KUID=$(id -u linuxlive-kiosk 2>/dev/null || echo 1000)
     export XDG_RUNTIME_DIR="/run/user/$KUID"
     export DISPLAY="${DISPLAY:-:0}"
     export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-    if [ -d "$XDG_RUNTIME_DIR" ]; then
-        export XAUTHORITY="$XDG_RUNTIME_DIR/Xauthority"
-    fi
+    [ -d "$XDG_RUNTIME_DIR" ] && export XAUTHORITY="$XDG_RUNTIME_DIR/Xauthority"
 }
-
-# --- Función que hace un refresh de Firefox ---
 do_refresh() {
     setup_env
     WINDOW=$(xdotool search --onlyvisible --class firefox 2>/dev/null | head -n 1)
@@ -238,30 +227,19 @@ do_refresh() {
         echo "[firefox-refresh] $(date '+%H:%M:%S') -> refrescado (uptime $(awk '{print int($1)}' /proc/uptime)s)"
     fi
 }
-
-# --- Umbrales ---
-FASE1_DURATION=240   # 4 minutos
-FASE1_INTERVAL=30    # 30 segundos
-FASE2_INTERVAL=7200  # 2 horas
-
-# --- Refrescar nada más empezar ---
+FASE1_DURATION=240
+FASE1_INTERVAL=30
+FASE2_INTERVAL=7200
 do_refresh
-
-# --- Bucle principal con dos fases ---
 while true; do
     UPTIME=$(awk '{print int($1)}' /proc/uptime)
-
     if [ "$UPTIME" -lt "$FASE1_DURATION" ]; then
-        # FASE 1: arranque → 4 minutos (cada 30s)
         SLEEP_FOR="$FASE1_INTERVAL"
-        # No sobrepasar el límite de la fase 1
         REMAINING=$(( FASE1_DURATION - UPTIME ))
         [ "$REMAINING" -lt "$SLEEP_FOR" ] && SLEEP_FOR="$REMAINING"
     else
-        # FASE 2: después de 4 minutos (cada 2h)
         SLEEP_FOR="$FASE2_INTERVAL"
     fi
-
     sleep "$SLEEP_FOR"
     do_refresh
 done
@@ -270,7 +248,7 @@ chmod +x /usr/local/bin/firefox-refresh.sh
 
 cat > /etc/systemd/system/firefox-refresh.service << 'EOF'
 [Unit]
-Description=Gavi Burger - refresco de Firefox (30s primeros 4min, luego 2h)
+Description=Gavi Burger - refresco de Firefox
 After=graphical.target
 
 [Service]
@@ -284,38 +262,139 @@ WantedBy=graphical.target
 EOF
 enable_svc firefox-refresh.service graphical.target
 
-# ===========================================================================
-# 7. ELIMINAR PROMPT "REMOVE INSTALLATION MEDIUM" DE CASPER
-#    Crítico para kioscos desatendidos: sin esto el reboot se queda colgado
-# ===========================================================================
+# ============================================================
+# 7. PANTALLAS 1080p DUPLICADAS (wlr-randr)
+# ============================================================
+cat > /usr/local/bin/set-displays-1080p.sh << 'EOF'
+#!/bin/bash
+for i in $(seq 1 30); do
+    if pgrep -u linuxlive-kiosk -x cage >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+sleep 5
 
-# Habilitar sysrq permanentemente (para el reboot forzado del agente)
+KUSER=linuxlive-kiosk
+PID=$(pgrep -u "$KUSER" -x cage | head -n1)
+[ -z "$PID" ] && exit 1
+
+WLD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" | awk -F= '/^WAYLAND_DISPLAY=/{print $2}')
+XRD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" | awk -F= '/^XDG_RUNTIME_DIR=/{print $2}')
+
+[ -z "$WLD" ] && WLD=wayland-0
+[ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
+
+run_wlr() {
+    sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr "$@"
+}
+
+for OUT in $(run_wlr | awk '/^[^ ]/{print $1}'); do
+    run_wlr --output "$OUT" --mode 1920x1080 --pos 0,0 2>/dev/null ||
+    run_wlr --output "$OUT" --mode 1920x1080@60Hz --pos 0,0 2>/dev/null || true
+done
+EOF
+chmod +x /usr/local/bin/set-displays-1080p.sh
+
+cat > /etc/systemd/system/set-displays.service << 'EOF'
+[Unit]
+Description=Set displays to 1080p duplicated
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/set-displays-1080p.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target
+EOF
+enable_svc set-displays.service graphical.target
+
+# ============================================================
+# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES (URL correcta)
+# ============================================================
+cat > /usr/local/sbin/clean-firefox-profile.sh << 'EOF'
+#!/bin/bash
+KUSER=linuxlive-kiosk
+FFBASE="/var/lib/$KUSER/.var/app/org.mozilla.firefox/config/mozilla/firefox"
+
+for i in $(seq 1 30); do
+    if [ -d "$FFBASE" ]; then break; fi
+    sleep 1
+done
+
+FFPROFILE=$(find "$FFBASE" -maxdepth 1 -type d -name "*.default*" 2>/dev/null | head -n1)
+[ -z "$FFPROFILE" ] && { mkdir -p "$FFBASE"; chown "$KUSER:$KUSER" "$FFBASE"; exit 0; }
+
+rm -f "$FFPROFILE"/sessionstore.jsonlz4
+rm -rf "$FFPROFILE"/sessionstore-backups
+rm -f "$FFPROFILE"/recovery.jsonlz4
+rm -f "$FFPROFILE"/recovery.baklz4
+
+cat > "$FFPROFILE/user.js" << 'USERJS'
+user_pref("browser.sessionstore.resume_from_crash", false);
+user_pref("browser.sessionstore.max_resumed_crashes", 0);
+user_pref("browser.sessionstore.resume_session_once", false);
+user_pref("browser.sessionstore.privacy_level", 2);
+user_pref("browser.sessionstore.interval", 600000);
+user_pref("browser.startup.page", 1);
+user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+1");
+user_pref("browser.sessionstore.max_tabs_undo", 0);
+user_pref("browser.sessionstore.max_windows_undo", 0);
+user_pref("toolkit.crashreporter.enabled", false);
+user_pref("browser.crashReports.unsubmittedCheck.autoSubmit2", false);
+user_pref("browser.crashReports.unsubmittedCheck.enabled", false);
+user_pref("browser.sessionstore.restore_on_demand", false);
+user_pref("browser.cache.disk.enable", false);
+user_pref("browser.cache.offline.enable", false);
+user_pref("browser.tabs.warnOnClose", false);
+user_pref("browser.tabs.warnOnCloseOtherTabs", false);
+user_pref("startup.homepage_override_url", "");
+user_pref("startup.homepage_welcome_url", "");
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+USERJS
+
+chown "$KUSER:$KUSER" "$FFPROFILE/user.js" 2>/dev/null
+EOF
+chmod +x /usr/local/sbin/clean-firefox-profile.sh
+
+cat > /etc/systemd/system/clean-firefox-profile.service << 'EOF'
+[Unit]
+Description=Clean Firefox profile before kiosk starts
+Before=cage.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clean-firefox-profile.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target
+EOF
+enable_svc clean-firefox-profile.service graphical.target
+
+# ============================================================
+# 9. SUPRIMIR PROMPT "REMOVE INSTALLATION MEDIUM" via drop-in
+# ============================================================
 mkdir -p /etc/sysctl.d
 echo "kernel.sysrq=1" > /etc/sysctl.d/99-gavi-sysrq.conf
 
-# Modificar /etc/init.d/casper si existe (eliminar el prompt y el read)
-if [ -f /etc/init.d/casper ]; then
-    sed -i 's/.*[Pp]lease remove the installation medium.*/    true  # kiosk: prompt removed/' /etc/init.d/casper
-    sed -i '/kiosk: prompt removed/{n;s/^\s*read.*/    true  # kiosk: read removed/}' /etc/init.d/casper
-fi
+mkdir -p /etc/systemd/system/casper.service.d
+cat > /etc/systemd/system/casper.service.d/override.conf << 'EOF'
+[Service]
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+EOF
 
-# Buscar el prompt en scripts de shutdown de systemd
-for dir in /lib/systemd/system-shutdown /usr/lib/systemd/system-shutdown /etc/systemd/system-shutdown; do
-    if [ -d "$dir" ]; then
-        for f in "$dir"/*; do
-            [ -f "$f" ] && sed -i 's/.*[Pp]lease remove the installation medium.*/true/' "$f" 2>/dev/null
-        done
-    fi
-done
-
-# Buscar en cualquier script de casper
-find /usr/share /etc /lib -name "*casper*" -type f 2>/dev/null | while read f; do
-    sed -i 's/.*[Pp]lease remove the installation medium.*/true/' "$f" 2>/dev/null || true
-done
-
-# Reconstruir initramfs para aplicar cambios de casper
-if command -v update-initramfs >/dev/null 2>&1; then
-    update-initramfs -u 2>/dev/null || true
-fi
+mkdir -p /etc/systemd/system/systemd-logind.service.d
+cat > /etc/systemd/system/systemd-logind.service.d/reboot.conf << 'EOF'
+[Service]
+Environment=SYSTEMD_LOG_LEVEL=info
+EOF
 
 echo "build.sh completado correctamente"
+exit 0
