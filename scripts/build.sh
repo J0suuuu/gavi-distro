@@ -123,8 +123,8 @@ cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 import json, time, os, sys
 import urllib.request, urllib.parse
 
-API = "https://gaviburger.com/api.php"
-SCREEN = "pantalla 1"
+API = "https://supermercadosalacasa.es/api.php"
+SCREEN = "Poligono entrada"
 STATE_FILE = "/var/lib/reboot-agent-state"
 
 def log(m): print(f"[reboot-agent] {m}", flush=True)
