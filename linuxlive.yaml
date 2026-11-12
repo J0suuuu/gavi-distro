@@ -14,7 +14,7 @@ branding:
 settings:
   autologin: true
 firefox:
-  homepage: "https://gaviburger.com/index.php?screen=Pantalla+1"
+  homepage: "https://gaviburger.com/index.php?screen=Pantalla+2"
 kiosk:
   app: firefox
 persistence: true
