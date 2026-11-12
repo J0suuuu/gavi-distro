@@ -107,7 +107,7 @@ import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "Poligono entrada"
+SCREEN = "Pantalla 1"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
@@ -183,7 +183,6 @@ while True:
             log(f"Nueva orden de reinicio ({rat}). Notificando a la API y reiniciando...")
             save(rat)
             
-            # === CORRECCIÓN CLAVE: Notificar a la API para cancelar la petición pendiente ===
             try:
                 q_cancel = urllib.parse.urlencode({"action": "cancel_reboot", "screen": SCREEN})
                 req_cancel = urllib.request.Request(API + "?" + q_cancel, headers={"User-Agent": "RebootAgent/1.0"})
@@ -192,9 +191,7 @@ while True:
             except Exception as e:
                 log(f"Error notificando a la API (se reinicia igual por seguridad): {e}")
             
-            # Pequeña pausa para asegurar que la API procesó la cancelación
             time.sleep(2)
-            
             force_reboot()
             sys.exit(0)
             
@@ -220,7 +217,6 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 enable_svc reboot-agent.service
-
 
 # ============================================================
 # 6. REFRESCO DE FIREFOX (2 fases: 30s x 4min, luego 2h)
@@ -279,11 +275,33 @@ EOF
 enable_svc firefox-refresh.service graphical.target
 
 # ============================================================
-# 7. PANTALLAS 1080p DUPLICADAS (VIGILANCIA CONTINUA CADA 60s)
+# 7. PANTALLAS 1080p + ROTACIÓN DINÁMICA DESDE JSON (CADA 60s)
 # ============================================================
 cat > /usr/local/bin/keep-displays-1080p.sh << 'EOF'
 #!/bin/bash
 KUSER=linuxlive-kiosk
+
+# Función para leer la rotación desde orientacion.json
+get_rotation() {
+    python3 -c '
+import urllib.request
+import json
+try:
+    with urllib.request.urlopen("https://gaviburger.com/orientacion.json", timeout=5) as r:
+        data = json.loads(r.read().decode())
+        orientacion = data.get("orientacion", "normal").lower().strip()
+        if orientacion in ["vertical", "derecha", "90"]:
+            print("90")
+        elif orientacion in ["invertida", "180"]:
+            print("180")
+        elif orientacion in ["izquierda", "270"]:
+            print("270")
+        else:
+            print("normal")
+except Exception:
+    print("normal")
+'
+}
 
 while true; do
     PID=$(pgrep -u "$KUSER" -x cage | head -n1)
@@ -293,8 +311,10 @@ while true; do
         [ -z "$WLD" ] && WLD=wayland-0
         [ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
 
-        sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-1 --mode 1920x1080 --pos 0,0 2>/dev/null || true
-        sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-2 --mode 1920x1080 --pos 0,0 2>/dev/null || true
+        ROTATION=$(get_rotation)
+
+        sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-1 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
+        sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-2 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
     fi
     sleep 60
 done
@@ -303,7 +323,7 @@ chmod +x /usr/local/bin/keep-displays-1080p.sh
 
 cat > /etc/systemd/system/keep-displays-1080p.service << 'EOF'
 [Unit]
-Description=Keep displays at 1080p duplicated (continuous)
+Description=Keep displays at 1080p with dynamic rotation (continuous)
 After=graphical.target
 
 [Service]
@@ -318,7 +338,7 @@ EOF
 enable_svc keep-displays-1080p.service graphical.target
 
 # ============================================================
-# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES (URL CORREGIDA)
+# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES
 # ============================================================
 cat > /usr/local/sbin/clean-firefox-profile.sh << 'EOF'
 #!/bin/bash
