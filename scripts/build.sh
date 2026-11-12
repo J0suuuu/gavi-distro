@@ -99,7 +99,7 @@ EOF
 enable_svc gavi-set-password.service
 
 # ============================================================
-# 5. AGENTE DE REINICIO
+# 5. AGENTE DE REINICIO (Pantalla 1)
 # ============================================================
 cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 #!/usr/bin/env python3
@@ -107,7 +107,7 @@ import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "Pantalla 2"
+SCREEN = "Pantalla 1"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
@@ -136,7 +136,7 @@ def force_reboot():
     log("Sincronizando disco...")
     os.system("sync")
     os.system("sync")
-    
+
     log("Habilitando sysrq...")
     try:
         with open("/proc/sys/kernel/sysrq", "w") as f:
@@ -150,11 +150,11 @@ def force_reboot():
             f.write("b")
     except Exception as e:
         log(f"sysrq fallo: {e}")
-    
+
     log("Esperando 3s y probando reboot -f...")
     time.sleep(3)
     os.system("reboot -f")
-    
+
     log("Esperando 3s y probando systemctl reboot -ff...")
     time.sleep(3)
     os.system("systemctl reboot -ff")
@@ -190,11 +190,11 @@ while True:
         pend = s.get("pending", False)
         rat = s.get("requested_at")
         log(f"Estado API -> pending={pend}, requested_at={rat}")
-        
+
         if pend and rat and str(rat) != str(last()):
             log(f"¡NUEVA ORDEN DETECTADA! ({rat}). Notificando a la API y reiniciando...")
             save(rat)
-            
+
             try:
                 q_cancel = urllib.parse.urlencode({"action": "cancel_reboot", "screen": SCREEN})
                 req_cancel = urllib.request.Request(API + "?" + q_cancel, headers={"User-Agent": "RebootAgent/1.0"})
@@ -203,13 +203,13 @@ while True:
                     log(f"Respuesta de cancel_reboot: {resp}")
             except Exception as e:
                 log(f"Error notificando a la API (se reinicia igual por seguridad): {e}")
-            
+
             log("Pausa de 2s para asegurar que la API procesó la cancelación...")
             time.sleep(2)
-            
+
             force_reboot()
             sys.exit(0)
-            
+
     except Exception as e:
         log(f"error de conexion: {e}")
     time.sleep(5)
@@ -295,7 +295,7 @@ enable_svc firefox-refresh.service graphical.target
 cat > /usr/local/bin/keep-displays-1080p.sh << 'EOF'
 #!/bin/bash
 KUSER=linuxlive-kiosk
-SCREEN_NAME="Pantalla 2"
+SCREEN_NAME="Pantalla 1"
 
 get_rotation() {
     python3 -c '
@@ -309,7 +309,7 @@ try:
     with urllib.request.urlopen("https://gaviburger.com/orientacion.json", timeout=5) as r:
         data = json.loads(r.read().decode())
         orientacion = data.get(screen_name, data.get("default", "normal")).lower().strip()
-        
+
         if orientacion in ["vertical", "derecha", "90"]:
             print("90")
         elif orientacion in ["invertida", "180"]:
@@ -359,7 +359,7 @@ EOF
 enable_svc keep-displays-1080p.service graphical.target
 
 # ============================================================
-# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES
+# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES (Pantalla 1)
 # ============================================================
 cat > /usr/local/sbin/clean-firefox-profile.sh << 'EOF'
 #!/bin/bash
@@ -386,7 +386,7 @@ user_pref("browser.sessionstore.resume_session_once", false);
 user_pref("browser.sessionstore.privacy_level", 2);
 user_pref("browser.sessionstore.interval", 600000);
 user_pref("browser.startup.page", 1);
-user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+2");
+user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+1");
 user_pref("browser.sessionstore.max_tabs_undo", 0);
 user_pref("browser.sessionstore.max_windows_undo", 0);
 user_pref("toolkit.crashreporter.enabled", false);
