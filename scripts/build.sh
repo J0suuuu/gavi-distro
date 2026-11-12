@@ -1,6 +1,12 @@
 #!/bin/bash
 set -u
 
+# ==============================================================================
+# VARIABLE GLOBAL: NOMBRE DE LA PANTALLA
+# ¡IMPORTANTE! Debe coincidir EXACTAMENTE con el nombre en tu panel de admin.
+# ==============================================================================
+NOMBRE_PANTALLA="Pantalla 1"
+
 enable_svc() {
     local svc="$1"
     local target="${2:-multi-user.target}"
@@ -99,15 +105,15 @@ EOF
 enable_svc gavi-set-password.service
 
 # ============================================================
-# 5. AGENTE DE REINICIO (CORREGIDO: notifica a la API antes de reiniciar)
+# 5. AGENTE DE REINICIO (CON LOGS DETALLADOS PARA DIAGNÓSTICO)
 # ============================================================
-cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
+cat > /usr/local/bin/reboot-agent.py << PYEOF
 #!/usr/bin/env python3
 import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "Pantalla 2"
+SCREEN = "$NOMBRE_PANTALLA"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
@@ -132,18 +138,30 @@ def save(v):
         log(f"error guardando estado: {e}")
 
 def force_reboot():
+    log("=== INICIANDO SECUENCIA DE REINICIO ===")
     log("Sincronizando disco...")
     os.system("sync")
     os.system("sync")
-    os.system("echo 1 > /proc/sys/kernel/sysrq 2>/dev/null")
-    log("Reboot via sysrq...")
+    
+    log("Habilitando sysrq...")
+    try:
+        with open("/proc/sys/kernel/sysrq", "w") as f:
+            f.write("1")
+    except Exception as e:
+        log(f"Error habilitando sysrq: {e}")
+
+    log("Disparando reboot via sysrq (b)...")
     try:
         with open("/proc/sysrq-trigger", "w") as f:
             f.write("b")
     except Exception as e:
         log(f"sysrq fallo: {e}")
+    
+    log("Esperando 3s y probando reboot -f...")
     time.sleep(3)
     os.system("reboot -f")
+    
+    log("Esperando 3s y probando systemctl reboot -ff...")
     time.sleep(3)
     os.system("systemctl reboot -ff")
 
@@ -170,28 +188,31 @@ for i in range(30):
         log(f"Esperando red... ({i+1}/30)")
         time.sleep(2)
 
-log(f"Arrancando agente para pantalla: {SCREEN}")
+log(f"Arrancando agente para pantalla: '{SCREEN}'")
 while True:
     try:
         api("ping_reboot")
         s = api("get_reboot")
         pend = s.get("pending", False)
         rat = s.get("requested_at")
-        log(f"pending={pend} requested_at={rat}")
+        log(f"Estado API -> pending={pend}, requested_at={rat}")
         
         if pend and rat and str(rat) != str(last()):
-            log(f"Nueva orden de reinicio ({rat}). Notificando a la API y reiniciando...")
+            log(f"¡NUEVA ORDEN DETECTADA! ({rat}). Notificando a la API y reiniciando...")
             save(rat)
             
             try:
                 q_cancel = urllib.parse.urlencode({"action": "cancel_reboot", "screen": SCREEN})
                 req_cancel = urllib.request.Request(API + "?" + q_cancel, headers={"User-Agent": "RebootAgent/1.0"})
                 with urllib.request.urlopen(req_cancel, timeout=5) as r_cancel:
-                    log(f"API notificada (cancel_reboot): {r_cancel.read().decode()}")
+                    resp = r_cancel.read().decode()
+                    log(f"Respuesta de cancel_reboot: {resp}")
             except Exception as e:
                 log(f"Error notificando a la API (se reinicia igual por seguridad): {e}")
             
+            log("Pausa de 2s para asegurar que la API procesó la cancelación...")
             time.sleep(2)
+            
             force_reboot()
             sys.exit(0)
             
@@ -280,16 +301,22 @@ enable_svc firefox-refresh.service graphical.target
 cat > /usr/local/bin/keep-displays-1080p.sh << 'EOF'
 #!/bin/bash
 KUSER=linuxlive-kiosk
+SCREEN_NAME="$NOMBRE_PANTALLA"
 
-# Función para leer la rotación desde orientacion.json
 get_rotation() {
     python3 -c '
 import urllib.request
 import json
+import sys
+
+screen_name = sys.argv[1] if len(sys.argv) > 1 else "default"
+
 try:
     with urllib.request.urlopen("https://gaviburger.com/orientacion.json", timeout=5) as r:
         data = json.loads(r.read().decode())
-        orientacion = data.get("orientacion", "normal").lower().strip()
+        # Busca la pantalla específica, si no existe usa "default", y si no, "normal"
+        orientacion = data.get(screen_name, data.get("default", "normal")).lower().strip()
+        
         if orientacion in ["vertical", "derecha", "90"]:
             print("90")
         elif orientacion in ["invertida", "180"]:
@@ -298,9 +325,9 @@ try:
             print("270")
         else:
             print("normal")
-except Exception:
+except Exception as e:
     print("normal")
-'
+' "$1"
 }
 
 while true; do
@@ -311,7 +338,8 @@ while true; do
         [ -z "$WLD" ] && WLD=wayland-0
         [ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
 
-        ROTATION=$(get_rotation)
+        ROTATION=$(get_rotation "$SCREEN_NAME")
+        echo "[$(date '+%H:%M:%S')] Pantalla '$SCREEN_NAME' -> Rotación aplicada: $ROTATION"
 
         sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-1 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
         sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-2 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
@@ -365,7 +393,7 @@ user_pref("browser.sessionstore.resume_session_once", false);
 user_pref("browser.sessionstore.privacy_level", 2);
 user_pref("browser.sessionstore.interval", 600000);
 user_pref("browser.startup.page", 1);
-user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+2");
+user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+1");
 user_pref("browser.sessionstore.max_tabs_undo", 0);
 user_pref("browser.sessionstore.max_windows_undo", 0);
 user_pref("toolkit.crashreporter.enabled", false);
