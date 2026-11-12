@@ -1,12 +1,6 @@
 #!/bin/bash
 set -u
 
-# ==============================================================================
-# VARIABLE GLOBAL: NOMBRE DE LA PANTALLA
-# ¡IMPORTANTE! Debe coincidir EXACTAMENTE con el nombre en tu panel de admin.
-# ==============================================================================
-NOMBRE_PANTALLA="Pantalla 2"
-
 enable_svc() {
     local svc="$1"
     local target="${2:-multi-user.target}"
@@ -105,15 +99,15 @@ EOF
 enable_svc gavi-set-password.service
 
 # ============================================================
-# 5. AGENTE DE REINICIO (CON LOGS DETALLADOS PARA DIAGNÓSTICO)
+# 5. AGENTE DE REINICIO
 # ============================================================
-cat > /usr/local/bin/reboot-agent.py << PYEOF
+cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 #!/usr/bin/env python3
 import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "$NOMBRE_"
+SCREEN = "Pantalla 2"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
@@ -188,7 +182,7 @@ for i in range(30):
         log(f"Esperando red... ({i+1}/30)")
         time.sleep(2)
 
-log(f"Arrancando agente para : '{SCREEN}'")
+log(f"Arrancando agente para pantalla: '{SCREEN}'")
 while True:
     try:
         api("ping_reboot")
@@ -296,12 +290,12 @@ EOF
 enable_svc firefox-refresh.service graphical.target
 
 # ============================================================
-# 7. S 1080p + ROTACIÓN DINÁMICA DESDE JSON (CADA 60s)
+# 7. PANTALLAS 1080p + ROTACIÓN DINÁMICA DESDE JSON (CADA 60s)
 # ============================================================
 cat > /usr/local/bin/keep-displays-1080p.sh << 'EOF'
 #!/bin/bash
 KUSER=linuxlive-kiosk
-SCREEN_NAME="$NOMBRE_"
+SCREEN_NAME="Pantalla 2"
 
 get_rotation() {
     python3 -c '
@@ -314,7 +308,6 @@ screen_name = sys.argv[1] if len(sys.argv) > 1 else "default"
 try:
     with urllib.request.urlopen("https://gaviburger.com/orientacion.json", timeout=5) as r:
         data = json.loads(r.read().decode())
-        # Busca la  específica, si no existe usa "default", y si no, "normal"
         orientacion = data.get(screen_name, data.get("default", "normal")).lower().strip()
         
         if orientacion in ["vertical", "derecha", "90"]:
@@ -339,7 +332,7 @@ while true; do
         [ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
 
         ROTATION=$(get_rotation "$SCREEN_NAME")
-        echo "[$(date '+%H:%M:%S')]  '$SCREEN_NAME' -> Rotación aplicada: $ROTATION"
+        echo "[$(date '+%H:%M:%S')] Pantalla '$SCREEN_NAME' -> Rotación aplicada: $ROTATION"
 
         sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-1 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
         sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-2 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
