@@ -107,7 +107,7 @@ import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "Poligono entrada"
+SCREEN = "Pantalla 1"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
