@@ -99,7 +99,7 @@ EOF
 enable_svc gavi-set-password.service
 
 # ============================================================
-# 5. AGENTE DE REINICIO (con protección antibucle y fuerza bruta sysrq)
+# 5. AGENTE DE REINICIO (CORREGIDO: notifica a la API antes de reiniciar)
 # ============================================================
 cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 #!/usr/bin/env python3
@@ -107,7 +107,7 @@ import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "Pantalla 1"
+SCREEN = "Poligono entrada"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
@@ -178,11 +178,26 @@ while True:
         pend = s.get("pending", False)
         rat = s.get("requested_at")
         log(f"pending={pend} requested_at={rat}")
+        
         if pend and rat and str(rat) != str(last()):
-            log(f"Nueva orden de reinicio ({rat}). Reiniciando...")
+            log(f"Nueva orden de reinicio ({rat}). Notificando a la API y reiniciando...")
             save(rat)
+            
+            # === CORRECCIÓN CLAVE: Notificar a la API para cancelar la petición pendiente ===
+            try:
+                q_cancel = urllib.parse.urlencode({"action": "cancel_reboot", "screen": SCREEN})
+                req_cancel = urllib.request.Request(API + "?" + q_cancel, headers={"User-Agent": "RebootAgent/1.0"})
+                with urllib.request.urlopen(req_cancel, timeout=5) as r_cancel:
+                    log(f"API notificada (cancel_reboot): {r_cancel.read().decode()}")
+            except Exception as e:
+                log(f"Error notificando a la API (se reinicia igual por seguridad): {e}")
+            
+            # Pequeña pausa para asegurar que la API procesó la cancelación
+            time.sleep(2)
+            
             force_reboot()
             sys.exit(0)
+            
     except Exception as e:
         log(f"error de conexion: {e}")
     time.sleep(5)
@@ -205,6 +220,7 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 enable_svc reboot-agent.service
+
 
 # ============================================================
 # 6. REFRESCO DE FIREFOX (2 fases: 30s x 4min, luego 2h)
