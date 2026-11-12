@@ -107,7 +107,7 @@ import json, time, os, sys
 import urllib.request, urllib.parse
 
 API = "https://gaviburger.com/api.php"
-SCREEN = "Pantalla 1"
+SCREEN = "Pantalla 2"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
@@ -365,7 +365,7 @@ user_pref("browser.sessionstore.resume_session_once", false);
 user_pref("browser.sessionstore.privacy_level", 2);
 user_pref("browser.sessionstore.interval", 600000);
 user_pref("browser.startup.page", 1);
-user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+1");
+user_pref("browser.startup.homepage", "https://gaviburger.com/index.php?screen=Pantalla+2");
 user_pref("browser.sessionstore.max_tabs_undo", 0);
 user_pref("browser.sessionstore.max_windows_undo", 0);
 user_pref("toolkit.crashreporter.enabled", false);
