@@ -263,57 +263,46 @@ EOF
 enable_svc firefox-refresh.service graphical.target
 
 # ============================================================
-# 7. PANTALLAS 1080p DUPLICADAS (wlr-randr)
+# 7. PANTALLAS 1080p DUPLICADAS (VIGILANCIA CONTINUA CADA 60s)
 # ============================================================
-cat > /usr/local/bin/set-displays-1080p.sh << 'EOF'
+cat > /usr/local/bin/keep-displays-1080p.sh << 'EOF'
 #!/bin/bash
-for i in $(seq 1 30); do
-    if pgrep -u linuxlive-kiosk -x cage >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-sleep 5
-
 KUSER=linuxlive-kiosk
-PID=$(pgrep -u "$KUSER" -x cage | head -n1)
-[ -z "$PID" ] && exit 1
 
-WLD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" | awk -F= '/^WAYLAND_DISPLAY=/{print $2}')
-XRD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" | awk -F= '/^XDG_RUNTIME_DIR=/{print $2}')
+while true; do
+    PID=$(pgrep -u "$KUSER" -x cage | head -n1)
+    if [ -n "$PID" ]; then
+        WLD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" 2>/dev/null | awk -F= '/^WAYLAND_DISPLAY=/{print $2}')
+        XRD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" 2>/dev/null | awk -F= '/^XDG_RUNTIME_DIR=/{print $2}')
+        [ -z "$WLD" ] && WLD=wayland-0
+        [ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
 
-[ -z "$WLD" ] && WLD=wayland-0
-[ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
-
-run_wlr() {
-    sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr "$@"
-}
-
-for OUT in $(run_wlr | awk '/^[^ ]/{print $1}'); do
-    run_wlr --output "$OUT" --mode 1920x1080 --pos 0,0 2>/dev/null ||
-    run_wlr --output "$OUT" --mode 1920x1080@60Hz --pos 0,0 2>/dev/null || true
+        sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-1 --mode 1920x1080 --pos 0,0 2>/dev/null || true
+        sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-2 --mode 1920x1080 --pos 0,0 2>/dev/null || true
+    fi
+    sleep 60
 done
 EOF
-chmod +x /usr/local/bin/set-displays-1080p.sh
+chmod +x /usr/local/bin/keep-displays-1080p.sh
 
-cat > /etc/systemd/system/set-displays.service << 'EOF'
+cat > /etc/systemd/system/keep-displays-1080p.service << 'EOF'
 [Unit]
-Description=Set displays to 1080p duplicated
+Description=Keep displays at 1080p duplicated (continuous)
 After=graphical.target
-Wants=graphical.target
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/set-displays-1080p.sh
-RemainAfterExit=yes
+Type=simple
+ExecStart=/usr/local/bin/keep-displays-1080p.sh
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=graphical.target
 EOF
-enable_svc set-displays.service graphical.target
+enable_svc keep-displays-1080p.service graphical.target
 
 # ============================================================
-# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES (URL correcta)
+# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES (URL CORREGIDA)
 # ============================================================
 cat > /usr/local/sbin/clean-firefox-profile.sh << 'EOF'
 #!/bin/bash
