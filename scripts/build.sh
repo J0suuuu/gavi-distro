@@ -133,31 +133,15 @@ def save(v):
 
 def force_reboot():
     log("=== INICIANDO SECUENCIA DE REINICIO ===")
-    log("Sincronizando disco...")
-    os.system("sync")
-    os.system("sync")
-
-    log("Habilitando sysrq...")
+    os.system("sync"); os.system("sync")
     try:
-        with open("/proc/sys/kernel/sysrq", "w") as f:
-            f.write("1")
-    except Exception as e:
-        log(f"Error habilitando sysrq: {e}")
-
-    log("Disparando reboot via sysrq (b)...")
+        with open("/proc/sys/kernel/sysrq", "w") as f: f.write("1")
+    except Exception as e: log(f"Error habilitando sysrq: {e}")
     try:
-        with open("/proc/sysrq-trigger", "w") as f:
-            f.write("b")
-    except Exception as e:
-        log(f"sysrq fallo: {e}")
-
-    log("Esperando 3s y probando reboot -f...")
-    time.sleep(3)
-    os.system("reboot -f")
-
-    log("Esperando 3s y probando systemctl reboot -ff...")
-    time.sleep(3)
-    os.system("systemctl reboot -ff")
+        with open("/proc/sysrq-trigger", "w") as f: f.write("b")
+    except Exception as e: log(f"sysrq fallo: {e}")
+    time.sleep(3); os.system("reboot -f")
+    time.sleep(3); os.system("systemctl reboot -ff")
 
 boot_ts = str(int(time.time()))
 try:
@@ -166,50 +150,32 @@ try:
     log(f"Boot detectado: {boot_ts} (anterior: {prev_boot})")
     try:
         if int(boot_ts) - int(prev_boot) < 10:
-            log("Posible bucle detectado, esperando 60s antes de actuar...")
-            time.sleep(60)
-    except Exception:
-        pass
-except Exception:
-    pass
+            log("Posible bucle detectado, esperando 60s..."); time.sleep(60)
+    except Exception: pass
+except Exception: pass
 
 for i in range(30):
     try:
-        api("ping_reboot")
-        log("Red disponible")
-        break
+        api("ping_reboot"); log("Red disponible"); break
     except Exception:
-        log(f"Esperando red... ({i+1}/30)")
-        time.sleep(2)
+        log(f"Esperando red... ({i+1}/30)"); time.sleep(2)
 
 log(f"Arrancando agente para pantalla: '{SCREEN}'")
 while True:
     try:
         api("ping_reboot")
         s = api("get_reboot")
-        pend = s.get("pending", False)
-        rat = s.get("requested_at")
+        pend = s.get("pending", False); rat = s.get("requested_at")
         log(f"Estado API -> pending={pend}, requested_at={rat}")
-
         if pend and rat and str(rat) != str(last()):
-            log(f"¡NUEVA ORDEN DETECTADA! ({rat}). Notificando a la API y reiniciando...")
+            log(f"¡NUEVA ORDEN! ({rat}). Cancelando y reiniciando...")
             save(rat)
-
             try:
-                q_cancel = urllib.parse.urlencode({"action": "cancel_reboot", "screen": SCREEN})
-                req_cancel = urllib.request.Request(API + "?" + q_cancel, headers={"User-Agent": "RebootAgent/1.0"})
-                with urllib.request.urlopen(req_cancel, timeout=5) as r_cancel:
-                    resp = r_cancel.read().decode()
-                    log(f"Respuesta de cancel_reboot: {resp}")
-            except Exception as e:
-                log(f"Error notificando a la API (se reinicia igual por seguridad): {e}")
-
-            log("Pausa de 2s para asegurar que la API procesó la cancelación...")
-            time.sleep(2)
-
-            force_reboot()
-            sys.exit(0)
-
+                q = urllib.parse.urlencode({"action": "cancel_reboot", "screen": SCREEN})
+                req = urllib.request.Request(API + "?" + q, headers={"User-Agent": "RebootAgent/1.0"})
+                with urllib.request.urlopen(req, timeout=5) as r: log(f"cancel_reboot: {r.read().decode()}")
+            except Exception as e: log(f"Error cancelando: {e}")
+            time.sleep(2); force_reboot(); sys.exit(0)
     except Exception as e:
         log(f"error de conexion: {e}")
     time.sleep(5)
@@ -234,60 +200,77 @@ EOF
 enable_svc reboot-agent.service
 
 # ============================================================
-# 6. REFRESCO DE FIREFOX (2 fases: 30s x 4min, luego 2h)
+# 6. VIGILANTE DE RED + SESIÓN SIEMPRE LIMPIA (sustituye a firefox-refresh)
+#    - Reinicia Firefox al recuperar internet (fix "no internet")
+#    - Borra sessionstore tras cada reinicio (fix "trouble getting pages back")
+#    - Refresco completo cada 2h
 # ============================================================
-cat > /usr/local/bin/firefox-refresh.sh << 'EOF'
+# Limpieza por si quedara el servicio viejo de alguna build anterior
+rm -f /etc/systemd/system/graphical.target.wants/firefox-refresh.service
+rm -f /etc/systemd/system/firefox-refresh.service
+
+cat > /usr/local/bin/gavi-net-watchdog.sh << 'EOF'
 #!/bin/bash
-sleep 30
-setup_env() {
-    KUID=$(id -u linuxlive-kiosk 2>/dev/null || echo 1000)
-    export XDG_RUNTIME_DIR="/run/user/$KUID"
-    export DISPLAY="${DISPLAY:-:0}"
-    export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-    [ -d "$XDG_RUNTIME_DIR" ] && export XAUTHORITY="$XDG_RUNTIME_DIR/Xauthority"
+SITE="https://gaviburger.com/index.php?screen=Pantalla+1"
+FFBASE="/var/lib/linuxlive-kiosk/.var/app/org.mozilla.firefox/config/mozilla/firefox"
+last="down"
+counter=0
+
+# Borra TODO rastro de sesión para que Firefox arranque 100% limpio
+wipe_session() {
+    for d in "$FFBASE"/*.default*; do
+        [ -d "$d" ] || continue
+        rm -f "$d/sessionstore.jsonlz4"
+        rm -rf "$d/sessionstore-backups"
+        rm -f "$d/recovery.jsonlz4" "$d/recovery.baklz4"
+    done
 }
-do_refresh() {
-    setup_env
-    WINDOW=$(xdotool search --onlyvisible --class firefox 2>/dev/null | head -n 1)
-    if [ -n "$WINDOW" ]; then
-        xdotool key --window "$WINDOW" ctrl+r 2>/dev/null
-        echo "[firefox-refresh] $(date '+%H:%M:%S') -> refrescado (uptime $(awk '{print int($1)}' /proc/uptime)s)"
-    fi
+
+restart_firefox() {
+    pkill -9 -f 'firefox-bin' 2>/dev/null
+    pkill -9 -f 'bwrap' 2>/dev/null
+    sleep 2
+    wipe_session   # clave: elimina la sesión "crasheada" antes del próximo arranque
 }
-FASE1_DURATION=240
-FASE1_INTERVAL=30
-FASE2_INTERVAL=7200
-do_refresh
+
 while true; do
-    UPTIME=$(awk '{print int($1)}' /proc/uptime)
-    if [ "$UPTIME" -lt "$FASE1_DURATION" ]; then
-        SLEEP_FOR="$FASE1_INTERVAL"
-        REMAINING=$(( FASE1_DURATION - UPTIME ))
-        [ "$REMAINING" -lt "$SLEEP_FOR" ] && SLEEP_FOR="$REMAINING"
-    else
-        SLEEP_FOR="$FASE2_INTERVAL"
+    if curl -s -o /dev/null -m 6 "$SITE"; then net="up"; else net="down"; fi
+
+    # La red ACABA de volver (o primer check con red) -> reinicio limpio
+    if [ "$net" = "up" ] && [ "$last" = "down" ]; then
+        echo "[watchdog] $(date '+%H:%M:%S')] Red recuperada -> reinicio limpio de Firefox"
+        restart_firefox
     fi
-    sleep "$SLEEP_FOR"
-    do_refresh
+
+    # Refresco programado cada 2h (240 ciclos de 30s)
+    counter=$((counter+1))
+    if [ "$counter" -ge 240 ]; then
+        counter=0
+        echo "[watchdog] $(date '+%H:%M:%S')] Refresco 2h -> reinicio limpio de Firefox"
+        restart_firefox
+    fi
+
+    last="$net"
+    sleep 30
 done
 EOF
-chmod +x /usr/local/bin/firefox-refresh.sh
+chmod +x /usr/local/bin/gavi-net-watchdog.sh
 
-cat > /etc/systemd/system/firefox-refresh.service << 'EOF'
+cat > /etc/systemd/system/gavi-net-watchdog.service << 'EOF'
 [Unit]
-Description=Gavi Burger - refresco de Firefox
-After=graphical.target
+Description=Gavi network watchdog (sesion limpia + recovery de red)
+After=network-online.target graphical.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/firefox-refresh.sh
+ExecStart=/usr/local/bin/gavi-net-watchdog.sh
 Restart=always
 RestartSec=10
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
-enable_svc firefox-refresh.service graphical.target
+enable_svc gavi-net-watchdog.service multi-user.target
 
 # ============================================================
 # 7. PANTALLAS 1080p + ROTACIÓN DINÁMICA DESDE JSON (CADA 60s)
@@ -299,27 +282,17 @@ SCREEN_NAME="Pantalla 1"
 
 get_rotation() {
     python3 -c '
-import urllib.request
-import json
-import sys
-
+import urllib.request, json, sys
 screen_name = sys.argv[1] if len(sys.argv) > 1 else "default"
-
 try:
     with urllib.request.urlopen("https://gaviburger.com/orientacion.json", timeout=5) as r:
         data = json.loads(r.read().decode())
-        orientacion = data.get(screen_name, data.get("default", "normal")).lower().strip()
-
-        if orientacion in ["vertical", "derecha", "90"]:
-            print("90")
-        elif orientacion in ["invertida", "180"]:
-            print("180")
-        elif orientacion in ["izquierda", "270"]:
-            print("270")
-        else:
-            print("normal")
-except Exception as e:
-    print("normal")
+    o = data.get(screen_name, data.get("default", "normal")).lower().strip()
+    if o in ["vertical","derecha","90"]: print("90")
+    elif o in ["invertida","180"]: print("180")
+    elif o in ["izquierda","270"]: print("270")
+    else: print("normal")
+except Exception: print("normal")
 ' "$1"
 }
 
@@ -330,10 +303,7 @@ while true; do
         XRD=$(sudo tr '\0' '\n' < "/proc/$PID/environ" 2>/dev/null | awk -F= '/^XDG_RUNTIME_DIR=/{print $2}')
         [ -z "$WLD" ] && WLD=wayland-0
         [ -z "$XRD" ] && XRD=/run/user/$(id -u "$KUSER")
-
         ROTATION=$(get_rotation "$SCREEN_NAME")
-        echo "[$(date '+%H:%M:%S')] Pantalla '$SCREEN_NAME' -> Rotación aplicada: $ROTATION"
-
         sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-1 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
         sudo -u "$KUSER" env XDG_RUNTIME_DIR="$XRD" WAYLAND_DISPLAY="$WLD" wlr-randr --output HDMI-A-2 --mode 1920x1080 --pos 0,0 --transform "$ROTATION" 2>/dev/null || true
     fi
@@ -359,7 +329,7 @@ EOF
 enable_svc keep-displays-1080p.service graphical.target
 
 # ============================================================
-# 8. FIREFOX SIN RESTAURACIÓN DE SESIONES (Pantalla 1)
+# 8. FIREFOX: SESIÓN SIEMPRE NUEVA + NUNCA MODO OFFLINE
 # ============================================================
 cat > /usr/local/sbin/clean-firefox-profile.sh << 'EOF'
 #!/bin/bash
@@ -380,6 +350,8 @@ rm -f "$FFPROFILE"/recovery.jsonlz4
 rm -f "$FFPROFILE"/recovery.baklz4
 
 cat > "$FFPROFILE/user.js" << 'USERJS'
+user_pref("network.manage-offline-status", false);
+user_pref("network.online", true);
 user_pref("browser.sessionstore.resume_from_crash", false);
 user_pref("browser.sessionstore.max_resumed_crashes", 0);
 user_pref("browser.sessionstore.resume_session_once", false);
