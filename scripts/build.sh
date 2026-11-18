@@ -20,18 +20,18 @@ UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "b1f2a3c4-0000-1111-
 mkdir -p /etc/NetworkManager/system-connections
 cat > /etc/NetworkManager/system-connections/Telecable_feNq.nmconnection << EOF
 [connection]
-id=Telecable_feNq
+id=Telecable_5G-xunq
 uuid=${UUID}
 type=wifi
 autoconnect=true
 
 [wifi]
 mode=infrastructure
-ssid=Telecable_feNq
+ssid=Telecable_5G-xunq
 
 [wifi-security]
 key-mgmt=wpa-psk
-psk=m3F9C3YA
+psk=V4TGaDhn
 
 [ipv4]
 method=auto
@@ -39,7 +39,7 @@ method=auto
 [ipv6]
 method=auto
 EOF
-chmod 600 /etc/NetworkManager/system-connections/Telecable_feNq.nmconnection
+chmod 600 /etc/NetworkManager/system-connections/Telecable_5G-xunq.nmconnection
 
 # ============================================================
 # 2. LÍMITE DE CPU
@@ -106,8 +106,8 @@ cat > /usr/local/bin/reboot-agent.py << 'PYEOF'
 import json, time, os, sys
 import urllib.request, urllib.parse
 
-API = "https://gaviburger.com/api.php"
-SCREEN = "pantalla 1"
+API = "https://supermercadosalacasa.es/api.php"
+SCREEN = "Avenida entrada"
 STATE_FILE = "/var/lib/reboot-agent-state"
 BOOT_FILE = "/var/lib/reboot-agent-boot"
 
