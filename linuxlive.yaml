@@ -24,6 +24,16 @@ packages:
   - openssh-server
   - network-manager
   - wlr-randr
+  # --- watchdog de pantalla negra ---
+  - imagemagick        # magick/convert: mide el % de pixeles negros
+  - grim               # captura en Wayland/wlroots (cage)
+  - libglib2.0-bin     # gdbus: captura de respaldo
+  - scrot              # captura de respaldo si algun dia es X11
+  # --- ya las usan tus otros scripts (la base minimizada puede no traerlas) ---
+  - curl               # gavi-net-watchdog.sh
+  - python3            # reboot-agent.py y keep-displays-1080p.sh
+  - ca-certificates    # HTTPS de gaviburger.com en python/urllib
+  - procps             # pgrep / pkill
 
 scripts:
   build:
