@@ -1,10 +1,11 @@
-
 name: build
 
 on:
   push:
     branches: [main]
     paths-ignore: [README.md]
+  schedule:
+    - cron: "41 6 7 * *"
   workflow_dispatch:
 
 permissions:
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   build:
-    uses: Eric-Ness/linuxlive/.github/workflows/build.yml@v0.9.1
+    uses: Eric-Ness/linuxlive/.github/workflows/build.yml@v0.9.4
     with:
       spec: linuxlive.yaml
       publish-image: true
